@@ -1,0 +1,2 @@
+{"level":"DEBUG","ts":"2022-11-29T02:25:01.3483201+05:30","msg":"","service":"-grocery-rest-api","service":"user service","method":"Login","request":{"id":1,"user_name":"username","password":"password"},"err":null,"took":"0s"}
+{"level":"DEBUG","ts":"2022-11-29T02:25:22.2149345+05:30","msg":"","service":"-grocery-rest-api","service":"user service","method":"Login","request":{"id":1,"user_name":"username1","password":"password"},"err":null,"took":"0s"}
