@@ -1,99 +1,174 @@
 package main
 
 import (
+	"context"
+	"flag"
 	"fmt"
-	"log"
+	// "log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
+	"github.com/IRFAN374/gojwtsvc/common/chttp"
+	"github.com/IRFAN374/gojwtsvc/db"
+	"github.com/IRFAN374/gojwtsvc/model"
+	"github.com/IRFAN374/gojwtsvc/user"
+	userMw "github.com/IRFAN374/gojwtsvc/user/service"
+	userSvctransport "github.com/IRFAN374/gojwtsvc/user/transport"
+	userSvctransporthttp "github.com/IRFAN374/gojwtsvc/user/transport/http"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis"
+	"github.com/gorilla/mux"
+	"github.com/oklog/oklog/pkg/group"
+
+	gokitlogzap "github.com/go-kit/kit/log/zap"
+	kitHttp "github.com/go-kit/kit/transport/http"
+	gokitlog "github.com/go-kit/log"
+
 	"github.com/twinj/uuid"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
-var (
-	router = gin.Default()
-)
-
-type User struct {
-	ID       uint64 `json:"id"`
-	Username string `json:"username"`
-	Password string `json:"password"`
-}
+// var (
+// 	router = gin.Default()
+// )
 
 // A sample use
-var user = User{
+var users = model.User{
 	ID:       1,
 	Username: "username",
 	Password: "password",
-}
-
-type TokenDetails struct {
-	AccessToken  string
-	RefreshToken string
-	AccessUuid   string
-	RefreshUuid  string
-	AtExpires    int64
-	RtExpires    int64
-}
-
-type Todo struct {
-	UserID uint64 `json:"user_id"`
-	Title  string `json:"title"`
-}
-
-type AccessDetails struct {
-	AccessUuid string
-	UserId     uint64
 }
 
 var client *redis.Client
 
 func init() {
 	//Initializing redis
-	dsn := os.Getenv("REDIS_DSN")
-	if len(dsn) == 0 {
-		dsn = "localhost:6379"
-	}
-	client = redis.NewClient(&redis.Options{
-		Addr: dsn, //redis port
-	})
-	_, err := client.Ping().Result()
-	if err != nil {
-		panic(err)
-	}
+	client = db.CnnectRedis()
+}
+
+var env string
+
+func init() {
+	flag.StringVar(&env, "env", "", "kube env")
 }
 
 func main() {
 	fmt.Println("....... Welcome to golang jwt service.........")
-	router.POST("/login", Login)
-	router.POST("/todo", TokenAuthMiddleware(), CreateTodo)
-	router.POST("/logout", TokenAuthMiddleware(), Logout)
+	// router.POST("/login", Login)
+	// router.POST("/todo", TokenAuthMiddleware(), CreateTodo)
+	// router.POST("/logout", TokenAuthMiddleware(), Logout)
 
-	log.Fatal(router.Run(":8080"))
+
+	fmt.Println("Hello World")
+
+	flag.Parse()
+
+	if env == "" {
+		os.Getenv("env")
+	}
+
+	ServiceName := fmt.Sprintf("%s-grocery-rest-api", env)
+
+	
+	debugLogger, _, _, _ := getLogger(ServiceName, zapcore.DebugLevel)
+
+	var httpServerBefore = []kitHttp.ServerOption{
+		kitHttp.ServerErrorEncoder(kitHttp.ErrorEncoder(chttp.EncodeError)),
+	}
+	// Htpp Middleware
+	var mwf []mux.MiddlewareFunc
+
+	// router
+	httpRouter := mux.NewRouter().StrictSlash(false)
+	httpRouter.Use(mwf...)
+	httpRouter.PathPrefix("/health").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+
+	})
+
+	var userSvc user.Service
+	{
+		userSvc = user.NewService(client)
+		userSvc = userMw.LoggingMiddleware(gokitlog.With(debugLogger, "service", "user service"))(userSvc)
+
+		userSvcEndpoints := userSvctransport.Endpoints(userSvc)
+		usrSvcHandler := userSvctransporthttp.NewHTTPHandler(&userSvcEndpoints, httpServerBefore...)
+
+		httpRouter.PathPrefix("/user").Handler(usrSvcHandler)
+
+	}
+
+	// log.Fatal(router.Run(":8080"))
+
+	var server group.Group
+	{
+		httpServer := &http.Server{
+			Addr:    ":9000",
+			Handler: httpRouter,
+		}
+
+		server.Add(func() error {
+			fmt.Printf("starting http server, port:%d \n", 9000)
+			return httpServer.ListenAndServe()
+		}, func(err error) {
+
+			// write code here for gracefull shutDown
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second*20)
+			defer cancel()
+
+			httpServer.Shutdown(ctx)
+		})
+
+	}
+
+	{
+		cancelInterrupt := make(chan struct{})
+
+		server.Add(func() error {
+			c := make(chan os.Signal, 1)
+			signal.Notify(c, syscall.SIGINT, syscall.SIGTERM, syscall.SIGABRT)
+
+			select {
+			case sig := <-c:
+				return fmt.Errorf("received signal %s", sig)
+			case <-cancelInterrupt:
+				return nil
+			}
+
+		}, func(err error) {
+			close(cancelInterrupt)
+		})
+	}
+
+	fmt.Printf("exiting...  errors: %v\n", server.Run())
 }
 
+// done
 func Login(c *gin.Context) {
-	var u User
+	var u model.User
 	if err := c.ShouldBindJSON(&u); err != nil {
 		c.JSON(http.StatusUnprocessableEntity, "Invalid json provided")
 		return
 	}
 	//compare the user from the request, with the one we defined:
-	if user.Username != u.Username || user.Password != u.Password {
+	if users.Username != u.Username || users.Password != u.Password {
 		c.JSON(http.StatusUnauthorized, "Please provide valid login details")
 		return
 	}
-	ts, err := CreateToken(user.ID)
+	ts, err := CreateToken(users.ID)
 	if err != nil {
 		c.JSON(http.StatusUnprocessableEntity, err.Error())
 		return
 	}
-	saveErr := CreateAuth(user.ID, ts)
+	saveErr := CreateAuth(users.ID, ts)
 	if saveErr != nil {
 		c.JSON(http.StatusUnprocessableEntity, saveErr.Error())
 	}
@@ -104,8 +179,9 @@ func Login(c *gin.Context) {
 	c.JSON(http.StatusOK, tokens)
 }
 
-func CreateToken(userid uint64) (*TokenDetails, error) {
-	td := &TokenDetails{}
+// done
+func CreateToken(userid uint64) (*model.TokenDetails, error) {
+	td := &model.TokenDetails{}
 	td.AtExpires = time.Now().Add(time.Minute * 15).Unix()
 	td.AccessUuid = uuid.NewV4().String()
 
@@ -139,7 +215,8 @@ func CreateToken(userid uint64) (*TokenDetails, error) {
 	return td, nil
 }
 
-func CreateAuth(userid uint64, td *TokenDetails) error {
+// done
+func CreateAuth(userid uint64, td *model.TokenDetails) error {
 	at := time.Unix(td.AtExpires, 0) //converting Unix to UTC(to Time object)
 	rt := time.Unix(td.RtExpires, 0)
 	now := time.Now()
@@ -191,7 +268,7 @@ func TokenValid(r *http.Request) error {
 	return nil
 }
 
-func ExtractTokenMetadata(r *http.Request) (*AccessDetails, error) {
+func ExtractTokenMetadata(r *http.Request) (*model.AccessDetails, error) {
 	token, err := VerifyToken(r)
 	if err != nil {
 		return nil, err
@@ -206,7 +283,7 @@ func ExtractTokenMetadata(r *http.Request) (*AccessDetails, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &AccessDetails{
+		return &model.AccessDetails{
 			AccessUuid: accessUuid,
 			UserId:     userId,
 		}, nil
@@ -214,7 +291,7 @@ func ExtractTokenMetadata(r *http.Request) (*AccessDetails, error) {
 	return nil, err
 }
 
-func FetchAuth(authD *AccessDetails) (uint64, error) {
+func FetchAuth(authD *model.AccessDetails) (uint64, error) {
 	userid, err := client.Get(authD.AccessUuid).Result()
 	if err != nil {
 		return 0, err
@@ -224,7 +301,7 @@ func FetchAuth(authD *AccessDetails) (uint64, error) {
 }
 
 func CreateTodo(c *gin.Context) {
-	var td *Todo
+	var td *model.Todo
 	if err := c.ShouldBindJSON(&td); err != nil {
 		c.JSON(http.StatusUnprocessableEntity, "invalid json")
 		return
@@ -348,37 +425,30 @@ func Refresh(c *gin.Context) {
 	}
 }
 
-// func CreateToken(userid uint64) (string, error) {
-// 	var err error
-// 	//Creating Access Token
-// 	os.Setenv("ACCESS_SECRET", "jdnfksdmfksd") //this should be in an env file
-// 	atClaims := jwt.MapClaims{}
-// 	atClaims["authorized"] = true
-// 	atClaims["user_id"] = userid
-// 	atClaims["exp"] = time.Now().Add(time.Minute * 15).Unix()
-// 	at := jwt.NewWithClaims(jwt.SigningMethodHS256, atClaims)
-// 	token, err := at.SignedString([]byte(os.Getenv("ACCESS_SECRET")))
-// 	if err != nil {
-// 		return "", err
-// 	}
-// 	return token, nil
-// }
+func getLogger(serviceName string, level zapcore.Level) (debugL, infoL, errorL gokitlog.Logger, zapLogger *zap.Logger) {
+	ec := zap.NewProductionEncoderConfig()
+	ec.EncodeTime = zapcore.RFC3339NanoTimeEncoder
+	ec.EncodeDuration = zapcore.StringDurationEncoder
+	ec.EncodeLevel = zapcore.CapitalLevelEncoder
+	encoder := zapcore.NewJSONEncoder(ec)
 
-// func Login(c *gin.Context) {
-// 	var u User
-// 	if err := c.ShouldBindJSON(&u); err != nil {
-// 		c.JSON(http.StatusUnprocessableEntity, "Invalid json provided")
-// 		return
-// 	}
-// 	//compare the user from the request, with the one we defined:
-// 	if user.Username != u.Username || user.Password != u.Password {
-// 		c.JSON(http.StatusUnauthorized, "Please provide valid login details")
-// 		return
-// 	}
-// 	token, err := CreateToken(user.ID)
-// 	if err != nil {
-// 		c.JSON(http.StatusUnprocessableEntity, err.Error())
-// 		return
-// 	}
-// 	c.JSON(http.StatusOK, token)
-// }
+	fw, err := os.Create("log.txt")
+	if err != nil {
+		panic(err)
+	}
+
+	core := zapcore.NewCore(encoder, fw, level)
+	zapLogger = zap.New(core)
+
+	debugL = gokitlogzap.NewZapSugarLogger(zapLogger, zap.DebugLevel)
+	debugL = gokitlog.With(debugL, "service", serviceName)
+
+	infoL = gokitlogzap.NewZapSugarLogger(zapLogger, zap.InfoLevel)
+	infoL = gokitlog.With(infoL, "service", serviceName)
+
+	errorL = gokitlogzap.NewZapSugarLogger(zap.New(zapcore.NewCore(encoder, os.Stderr, level)), zap.ErrorLevel)
+	errorL = gokitlog.With(errorL, "service", serviceName)
+
+	return
+
+}

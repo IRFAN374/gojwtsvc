@@ -4,7 +4,7 @@ import "github.com/IRFAN374/gojwtsvc/model"
 
 type (
 	LoginRequest struct {
-		Name     string `json:"name"`
+		Name     string `json:"username"`
 		Password string `json:"password"`
 	}
 	LoginResponse struct {

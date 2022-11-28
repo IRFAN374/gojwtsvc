@@ -11,7 +11,7 @@ import (
 func NewHTTPHandler(endpoints *transport.EndpointsSet, opts ...http.ServerOption) http1.Handler {
 	mux := mux.NewRouter()
 
-	mux.Methods("POST").Path("login").Handler(
+	mux.Methods("POST").Path("/user/login").Handler(
 		http.NewServer(
 			endpoints.LoginEndpoint,
 			Decode_Login_Request,
