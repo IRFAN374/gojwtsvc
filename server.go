@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+
 	// "log"
 	"net/http"
 	"os"
@@ -16,6 +17,9 @@ import (
 	"github.com/IRFAN374/gojwtsvc/common/chttp"
 	"github.com/IRFAN374/gojwtsvc/db"
 	"github.com/IRFAN374/gojwtsvc/model"
+	"github.com/IRFAN374/gojwtsvc/token"
+	tokenMw "github.com/IRFAN374/gojwtsvc/token/service"
+
 	"github.com/IRFAN374/gojwtsvc/user"
 	userMw "github.com/IRFAN374/gojwtsvc/user/service"
 	userSvctransport "github.com/IRFAN374/gojwtsvc/user/transport"
@@ -65,7 +69,6 @@ func main() {
 	// router.POST("/todo", TokenAuthMiddleware(), CreateTodo)
 	// router.POST("/logout", TokenAuthMiddleware(), Logout)
 
-
 	fmt.Println("Hello World")
 
 	flag.Parse()
@@ -74,9 +77,8 @@ func main() {
 		os.Getenv("env")
 	}
 
-	ServiceName := fmt.Sprintf("%s-grocery-rest-api", env)
+	ServiceName := fmt.Sprintf("%s-jwt-rest-api", env)
 
-	
 	debugLogger, _, _, _ := getLogger(ServiceName, zapcore.DebugLevel)
 
 	var httpServerBefore = []kitHttp.ServerOption{
@@ -93,9 +95,15 @@ func main() {
 
 	})
 
+	var tokenSvc token.Service
+	{
+		tokenSvc = token.NewService(client)
+		tokenSvc = tokenMw.LoggingMiddleware(gokitlog.With(debugLogger, "service", "token Service"))(tokenSvc)
+	}
+
 	var userSvc user.Service
 	{
-		userSvc = user.NewService(client)
+		userSvc = user.NewService(tokenSvc)
 		userSvc = userMw.LoggingMiddleware(gokitlog.With(debugLogger, "service", "user service"))(userSvc)
 
 		userSvcEndpoints := userSvctransport.Endpoints(userSvc)
