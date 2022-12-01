@@ -15,6 +15,7 @@ import (
 type Service interface {
 	CreateToken(ctx context.Context, userid uint64) (*model.TokenDetails, error)
 	CreateAuth(ctx context.Context, userid uint64, td *model.TokenDetails) error
+	VerifyToken(ctx context.Context) (err error)
 	Refresh(ctx context.Context) (err error)
 }
 
@@ -65,7 +66,7 @@ func (svc *service) CreateToken(ctx context.Context, userid uint64) (*model.Toke
 
 }
 
-func (svc *service) CreateAuth(ctx context.Context,userid uint64, td *model.TokenDetails) error {
+func (svc *service) CreateAuth(ctx context.Context, userid uint64, td *model.TokenDetails) error {
 	at := time.Unix(td.AtExpires, 0) //converting Unix to UTC(to Time object)
 	rt := time.Unix(td.RtExpires, 0)
 	now := time.Now()
@@ -81,7 +82,10 @@ func (svc *service) CreateAuth(ctx context.Context,userid uint64, td *model.Toke
 	return nil
 }
 
-
 func (svc *service) Refresh(ctx context.Context) (err error) {
 	return
+}
+
+func (svc *service) VerifyToken(ctx context.Context) (err error) {
+	return nil
 }

@@ -1,0 +1,13 @@
+{
+    
+    "service_name": "jwt-rest-api",
+    "redis_addr": "localhost:6379",
+    "http_port": "9000",
+    
+    "token_key": {
+        "access_secret": "superSecret",
+        "refresh_secret": "secret",
+        "at_expires": 15,
+        "rt_expires": 168
+    }
+}

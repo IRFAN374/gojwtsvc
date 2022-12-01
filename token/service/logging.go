@@ -67,6 +67,19 @@ func (M loggingMiddleware) Refresh(arg0 context.Context) (res0 error) {
 	return M.next.Refresh(arg0)
 }
 
+func (M loggingMiddleware) VerifyToken(arg0 context.Context) (res0 error) {
+	defer func(begin time.Time) {
+		M.logger.Log(
+			"method", "VerifyToken",
+			"request", logVerifyToken{},
+			"err", res0,
+			"took", time.Since(begin),
+		)
+	}(time.Now())
+
+	return M.next.VerifyToken(arg0)
+}
+
 type (
 	logCreateToken struct {
 		Userid uint64 `json:"userid"`
@@ -78,4 +91,6 @@ type (
 	}
 
 	logRefresh struct{}
+
+	logVerifyToken struct{}
 )

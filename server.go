@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/IRFAN374/gojwtsvc/common/chttp"
+	"github.com/IRFAN374/gojwtsvc/common/config"
 	"github.com/IRFAN374/gojwtsvc/db"
 	"github.com/IRFAN374/gojwtsvc/model"
 	"github.com/IRFAN374/gojwtsvc/token"
@@ -77,9 +78,13 @@ func main() {
 		os.Getenv("env")
 	}
 
-	ServiceName := fmt.Sprintf("%s-jwt-rest-api", env)
+	cfg, err := config.NewConfig(true)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("%s-%s", cfg.ServiceName, env)
 
-	debugLogger, _, _, _ := getLogger(ServiceName, zapcore.DebugLevel)
+	debugLogger, _, _, _ := getLogger(cfg.ServiceName, zapcore.DebugLevel)
 
 	var httpServerBefore = []kitHttp.ServerOption{
 		kitHttp.ServerErrorEncoder(kitHttp.ErrorEncoder(chttp.EncodeError)),
@@ -118,12 +123,12 @@ func main() {
 	var server group.Group
 	{
 		httpServer := &http.Server{
-			Addr:    ":9000",
+			Addr:    ": " + strconv.Itoa(cfg.HttpPort),
 			Handler: httpRouter,
 		}
 
 		server.Add(func() error {
-			fmt.Printf("starting http server, port:%d \n", 9000)
+			fmt.Printf("starting http server, port:%d \n", cfg.HttpPort)
 			return httpServer.ListenAndServe()
 		}, func(err error) {
 
